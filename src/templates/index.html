@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Collaborative Whiteboard & Integrated Chat (TCP vs UDP)</title>
+  
+  <!-- Google Font Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Socket.IO Client CDN (Untuk Flask-SocketIO Bridge) -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="../static/css/style.css">
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased h-screen overflow-hidden flex flex-col">
+
+  <!-- ========================================== -->
+  <!-- 1. ENTRY SCREEN VIEW                       -->
+  <!-- ========================================== -->
+  <div id="entry-view" class="view-transition fixed inset-0 z-50 flex items-center justify-center bg-slate-100/90 p-4">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-xl border border-slate-100 p-8 text-center flex flex-col items-center">
+      
+      <!-- Title & Subtitle -->
+      <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight mb-2">
+        Jarkom Tugas Besar #2
+      </h1>
+      <p class="text-slate-500 text-sm leading-relaxed mb-6">
+        Real-time Collaborative Whiteboard<br>& TCP/UDP Chat
+      </p>
+
+      <!-- Network Status Badges -->
+      <div class="flex flex-col gap-2 w-full items-center mb-6">
+        <div class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span>Server: 192.168.1.100</span>
+        </div>
+        <div class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span>Ports: 5000/TCP • 5001/UDP Ready</span>
+        </div>
+      </div>
+
+      <!-- Login Form -->
+      <form id="entry-form" class="w-full text-left space-y-4">
+        <div>
+          <label for="username-input" class="block text-xs font-semibold text-slate-700 mb-1.5">
+            Display Name / Username
+          </label>
+          <input 
+            type="text" 
+            id="username-input" 
+            class="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition placeholder:text-slate-400"
+            placeholder="Enter your name" 
+            required
+            autocomplete="off"
+          />
+        </div>
+
+        <button 
+          type="submit" 
+          id="enter-session-btn"
+          class="w-full py-3 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm transition shadow-sm hover:shadow flex items-center justify-center gap-2"
+        >
+          <span>Enter Session</span>
+        </button>
+      </form>
+
+      <!-- Mock Mode Indicator -->
+      <div class="mt-4 text-xs text-slate-400 flex items-center gap-1.5">
+        <span id="mock-badge" class="px-2 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200 text-[11px]">
+          Local Mock Ready (No Backend Required)
+        </span>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ======================================================== -->
+  <!-- 2. LIVE WHITEBOARD & CHAT DASHBOARD VIEW                 -->
+  <!-- ======================================================== -->
+  <div id="whiteboard-view" class="view-transition view-hidden flex-1 flex flex-col h-screen overflow-hidden">
+    
+    <!-- Top Navigation Bar -->
+    <header class="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-20 shrink-0">
+      
+      <!-- Left: Brand / Title -->
+      <div class="flex items-center gap-3">
+        <h2 class="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+          Dual-Socket Whiteboard
+        </h2>
+      </div>
+
+      <!-- Center: Socket Protocol Status Badges -->
+      <div class="hidden md:flex items-center gap-3">
+        <!-- TCP Status Badge -->
+        <div id="tcp-status-badge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 transition">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>TCP Chat (Port 5000): Connected</span>
+        </div>
+
+        <!-- UDP Status Badge -->
+        <div id="udp-status-badge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 transition">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>UDP Canvas (Port 5001): Streaming</span>
+        </div>
+      </div>
+
+      <!-- Right: User Info & Logout -->
+      <div class="flex items-center gap-3">
+        <div id="user-display-pill" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+          <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+          </svg>
+          <span id="user-display-text">User: Faiza (usr_node_01)</span>
+        </div>
+
+        <button 
+          id="logout-btn" 
+          type="button"
+          class="px-3.5 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold tracking-wide uppercase transition flex items-center gap-1.5 shadow-sm"
+        >
+          <svg class="w-3.5 h-3.5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+          </svg>
+          <span>LOG OUT</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace Container -->
+    <main class="flex-1 flex overflow-hidden">
+      
+      <!-- Sisi Kiri: Whiteboard Canvas Section (~72% width) -->
+      <section class="flex-1 bg-slate-100 p-4 flex flex-col gap-3 min-w-0 overflow-hidden">
+        
+        <!-- Whiteboard Top Toolbar -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          
+          <!-- Left Controls: Color Picker -->
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-medium text-slate-500">Color</span>
+            
+            <div class="flex items-center gap-2">
+              <button type="button" class="color-choice-btn color-swatch w-6 h-6 rounded-full bg-[#0F172A]" data-color="#0F172A" style="color: #0F172A;"></button>
+              <button type="button" class="color-choice-btn color-swatch w-6 h-6 rounded-full bg-[#EF4444] active" data-color="#EF4444" style="color: #EF4444;"></button>
+              <button type="button" class="color-choice-btn color-swatch w-6 h-6 rounded-full bg-[#3B82F6]" data-color="#3B82F6" style="color: #3B82F6;"></button>
+              <button type="button" class="color-choice-btn color-swatch w-6 h-6 rounded-full bg-[#10B981]" data-color="#10B981" style="color: #10B981;"></button>
+              <button type="button" class="color-choice-btn color-swatch w-6 h-6 rounded-full bg-[#F59E0B]" data-color="#F59E0B" style="color: #F59E0B;"></button>
+              <button type="button" class="color-choice-btn color-swatch w-6 h-6 rounded-full bg-[#8B5CF6]" data-color="#8B5CF6" style="color: #8B5CF6;"></button>
+            </div>
+
+            <!-- Hex Indicator & Input -->
+            <div class="flex items-center gap-1.5 ml-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50">
+              <span id="color-hex-indicator" class="w-3 h-3 rounded-full bg-[#EF4444]"></span>
+              <input 
+                id="color-hex-input" 
+                type="text" 
+                class="w-16 bg-transparent text-xs font-mono font-medium text-slate-700 outline-none uppercase" 
+                value="#EF4444"
+                maxlength="7"
+              />
+            </div>
+          </div>
+
+          <!-- Middle Controls: Brush Size -->
+          <div class="flex items-center gap-2">
+            <span id="brush-size-label" class="text-xs font-medium text-slate-600">Size: 5px</span>
+            
+            <div class="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200">
+              <button type="button" class="brush-size-btn text-xs font-medium px-2.5 py-1 rounded-md text-slate-600 hover:bg-slate-200 transition" data-size="2">2px</button>
+              <button type="button" class="brush-size-btn text-xs font-medium px-2.5 py-1 rounded-md bg-brand-600 text-white transition" data-size="5">5px</button>
+              <button type="button" class="brush-size-btn text-xs font-medium px-2.5 py-1 rounded-md text-slate-600 hover:bg-slate-200 transition" data-size="10">10px</button>
+              <button type="button" class="brush-size-btn text-xs font-medium px-2.5 py-1 rounded-md text-slate-600 hover:bg-slate-200 transition" data-size="16">16px</button>
+            </div>
+          </div>
+
+          <!-- Right Controls: Clear Canvas -->
+          <div>
+            <button 
+              id="clear-canvas-btn" 
+              type="button" 
+              class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-red-300 bg-white hover:bg-red-50 text-red-600 text-xs font-medium transition shadow-sm"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+              </svg>
+              <span>Clear Canvas</span>
+            </button>
+          </div>
+
+        </div>
+
+        <!-- Canvas Drawing Surface -->
+        <div id="canvas-container" class="canvas-grid-bg flex-1 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden cursor-crosshair">
+          <!-- Canvas Overlay for Remote Cursors -->
+          <div id="remote-cursors-layer" class="absolute inset-0 pointer-events-none z-10"></div>
+          
+          <!-- Primary HTML5 Canvas -->
+          <canvas id="whiteboard-canvas" class="block w-full h-full"></canvas>
+        </div>
+
+      </section>
+
+      <!-- Sisi Kanan: Live Room Chat Sidebar (~28% width) -->
+      <aside class="w-80 sm:w-96 bg-white border-l border-slate-200 flex flex-col h-full shrink-0 z-20">
+        
+        <!-- Chat Header -->
+        <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-bold text-slate-900 tracking-tight">Live Room Chat</h3>
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+              TCP SOCK_STREAM
+            </span>
+          </div>
+          
+          <!-- Online Counter Badge -->
+          <div id="online-badge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <span>2 Online</span>
+          </div>
+        </div>
+
+        <!-- Chat Messages Container -->
+        <div id="chat-messages" class="chat-scroll flex-1 p-4 overflow-y-auto space-y-3">
+          <!-- Pesan obrolan akan muncul di sini secara dinamis -->
+        </div>
+
+        <!-- Chat Input Footer Form -->
+        <div class="p-3 border-t border-slate-200 bg-white shrink-0">
+          <form id="chat-form" class="flex items-center gap-2">
+            <input 
+              type="text" 
+              id="chat-input" 
+              class="flex-1 px-4 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition placeholder:text-slate-400"
+              placeholder="Type a message via TCP..."
+              autocomplete="off"
+            />
+            <button 
+              type="submit" 
+              id="chat-send-btn"
+              class="px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm transition shadow-sm flex items-center gap-1.5 shrink-0"
+            >
+              <span>Send</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+              </svg>
+            </button>
+          </form>
+        </div>
+
+      </aside>
+
+    </main>
+
+  </div>
+
+
+  <!-- ======================================================== -->
+  <!-- 3. MAIN ORCHESTRATOR & APPLICATION INIT SCRIPT          -->
+  <!-- ======================================================== -->
+  <script src="../static/js/canvas.js"></script>
+  <script src="../static/js/chat.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // Configuration & State
+      let socket = null;
+      let isMockMode = true;
+      let activeUser = {
+        username: 'Faiza',
+        clientId: 'usr_node_01'
+      };
+
+      const entryView = document.getElementById('entry-view');
+      const whiteboardView = document.getElementById('whiteboard-view');
+      const entryForm = document.getElementById('entry-form');
+      const usernameInput = document.getElementById('username-input');
+      const userDisplayText = document.getElementById('user-display-text');
+      const logoutBtn = document.getElementById('logout-btn');
+      const mockBadge = document.getElementById('mock-badge');
+
+      // Inisialisasi koneksi Socket.IO ke Flask Bridge jika tersedia
+      try {
+        if (typeof io !== 'undefined') {
+          // Coba koneksi ke Flask SocketIO Bridge lokal di port 8080
+          socket = io('http://' + window.location.hostname + (window.location.port ? ':' + window.location.port : ':8080'), {
+            transports: ['websocket'],
+            timeout: 2500,
+            reconnectionAttempts: 3
+          });
+
+          socket.on('connect', () => {
+            console.log('[SocketIO Bridge] Terhubung ke Flask Bridge');
+            isMockMode = false;
+            if (mockBadge) {
+              mockBadge.textContent = 'Flask Bridge Active';
+              mockBadge.className = 'px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px]';
+            }
+            CanvasManager.setSocket(socket, false);
+            ChatManager.setSocket(socket, false);
+          });
+
+          socket.on('connect_error', () => {
+            console.warn('[SocketIO Bridge] Backend belum aktif, beralih ke Mock Mode');
+            isMockMode = true;
+            CanvasManager.setSocket(null, true);
+            ChatManager.setSocket(null, true);
+          });
+        }
+      } catch (err) {
+        console.warn('[SocketIO Bridge] Running in offline mock mode:', err);
+        isMockMode = true;
+      }
+
+      // Handler Masuk Sesi (Entry Screen -> Whiteboard)
+      entryForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const inputName = usernameInput.value.trim() || ('User_' + Math.floor(Math.random() * 900 + 100));
+        
+        // Generate atau tetapkan client_id sesuai format alur.md
+        activeUser = {
+          username: inputName,
+          clientId: 'usr_node_' + Math.floor(Math.random() * 90 + 10)
+        };
+
+        // Update teks identitas di navbar
+        userDisplayText.textContent = `User: ${activeUser.username} (${activeUser.clientId})`;
+
+        // Transisi halus antar tampilan
+        entryView.classList.add('view-hidden');
+        whiteboardView.classList.remove('view-hidden');
+
+        // Beritahukan modul Canvas & Chat
+        CanvasManager.updateUser(activeUser);
+        ChatManager.updateUser(activeUser);
+
+        // Inisialisasi Canvas setelah view ditampilkan agar dimensinya akurat
+        CanvasManager.init({
+          user: activeUser,
+          socket: socket,
+          isMockMode: isMockMode
+        });
+
+        // Inisialisasi Chat
+        ChatManager.init({
+          user: activeUser,
+          socket: socket,
+          isMockMode: isMockMode
+        });
+      });
+
+      // Handler Log Out
+      logoutBtn.addEventListener('click', () => {
+        whiteboardView.classList.add('view-hidden');
+        entryView.classList.remove('view-hidden');
+        usernameInput.value = '';
+        setTimeout(() => usernameInput.focus(), 150);
+      });
+    });
+  </script>
+
+</body>
+</html>

@@ -4,7 +4,7 @@ import threading
 import time
 import sys
 
-HOST = sys.argv[1] if len(sys.argv) > 1 else "192.168.0.106"
+HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 PORT = 5000
 
 class TCPChatClient:
@@ -52,7 +52,16 @@ class TCPChatClient:
                     line, self.buffer = self.buffer.split("\n", 1)
 
                     if line.strip():
-                        print(f"\n[RX] {line}")
+                        try:
+                            msg_obj = json.loads(line)
+                            if msg_obj.get("type") in ("system", "user_join", "user_leave"):
+                                print(f"\n[SYSTEM] {msg_obj.get('message')}")
+                            elif msg_obj.get("type") == "typing":
+                                pass # Abaikan paket typing di konsol sederhana
+                            else:
+                                print(f"\n[RX] {line}")
+                        except Exception:
+                            print(f"\n[RX] {line}")
                         print("You: ", end="", flush=True)
 
             except OSError:

@@ -1,5 +1,7 @@
 import os
-from flask import Flask, render_template
+import time
+import threading
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
 # Inisialisasi Flask
@@ -28,6 +30,27 @@ except ImportError:
     print("[INFO] udp_handler.py belum tersedia, menjalankan local broadcast fallback.")
 
 
+# Penyimpanan sesi user aktif: { sid: { 'username': str, 'client_id': str, 'joined_at': float } }
+online_users = {}
+online_users_lock = threading.Lock()
+
+def get_online_users_list():
+    with online_users_lock:
+        unique = {}
+        for sid, user_data in online_users.items():
+            cid = user_data.get('client_id')
+            if cid:
+                unique[cid] = user_data
+        return list(unique.values())
+
+def broadcast_online_users():
+    users = get_online_users_list()
+    socketio.emit('online_users_updated', {
+        'count': len(users),
+        'users': users
+    })
+
+
 @app.route('/')
 def index():
     """Menyajikan halaman utama Whiteboard & Chat."""
@@ -51,6 +74,106 @@ def handle_send_chat(payload):
             print(f"[TCP Error] Gagal mengirim pesan ke TCP Server: {e}")
     else:
         socketio.emit('receive_chat', payload)
+
+
+@socketio.on('user_join')
+def handle_user_join(payload):
+    sid = getattr(request, 'sid', None)
+    username = payload.get('username', 'Anonymous')
+    client_id = payload.get('client_id')
+
+    if sid:
+        with online_users_lock:
+            online_users[sid] = {
+                'username': username,
+                'client_id': client_id,
+                'joined_at': time.time()
+            }
+
+    print(f"[User Join] {username} ({client_id}) bergabung ke sesi. Total online: {len(get_online_users_list())}")
+
+    join_payload = {
+        'type': 'system',
+        'client_id': client_id,
+        'username': username,
+        'message': f"{username} bergabung ke sesi obrolan.",
+        'timestamp': payload.get('timestamp') or time.time()
+    }
+
+    if TCP_AVAILABLE and hasattr(tcp_handler, 'send_chat_message'):
+        try:
+            tcp_handler.send_chat_message(join_payload)
+        except Exception as e:
+            print(f"[TCP Error] Gagal mengirim user_join ke TCP Server: {e}")
+            socketio.emit('receive_chat', join_payload)
+    else:
+        socketio.emit('receive_chat', join_payload)
+
+    broadcast_online_users()
+
+
+@socketio.on('user_leave')
+def handle_user_leave(payload):
+    sid = getattr(request, 'sid', None)
+    username = payload.get('username')
+    client_id = payload.get('client_id')
+
+    if sid:
+        with online_users_lock:
+            user_info = online_users.pop(sid, None)
+            if user_info:
+                username = user_info.get('username', username)
+                client_id = user_info.get('client_id', client_id)
+
+    if not username:
+        username = 'Anonymous'
+
+    print(f"[User Leave] {username} ({client_id}) meninggalkan sesi.")
+
+    leave_payload = {
+        'type': 'user_leave',
+        'client_id': client_id,
+        'username': username,
+        'message': f"{username} meninggalkan sesi obrolan.",
+        'timestamp': payload.get('timestamp') or time.time()
+    }
+
+    if TCP_AVAILABLE and hasattr(tcp_handler, 'send_chat_message'):
+        try:
+            tcp_handler.send_chat_message(leave_payload)
+        except Exception as e:
+            print(f"[TCP Error] Gagal mengirim user_leave ke TCP Server: {e}")
+            socketio.emit('receive_chat', leave_payload)
+    else:
+        socketio.emit('receive_chat', leave_payload)
+
+    broadcast_online_users()
+
+
+@socketio.on('get_online_users')
+def handle_get_online_users():
+    emit('online_users_updated', {
+        'count': len(get_online_users_list()),
+        'users': get_online_users_list()
+    })
+
+
+@socketio.on('typing')
+def handle_typing(payload):
+    # Broadcast status pengetikan ke browser client lain
+    emit('user_typing', payload, broadcast=True, include_self=False)
+
+    # Teruskan ke TCP Server jika tersedia
+    if TCP_AVAILABLE and hasattr(tcp_handler, 'send_chat_message'):
+        try:
+            tcp_handler.send_chat_message({
+                'type': 'typing',
+                'client_id': payload.get('client_id'),
+                'username': payload.get('username'),
+                'is_typing': payload.get('is_typing', False)
+            })
+        except Exception:
+            pass
 
 
 # ==========================================
@@ -83,11 +206,46 @@ def handle_clear_canvas(payload):
 @socketio.on('connect')
 def handle_connect():
     print("[Client Connected] Browser client connected to Flask-SocketIO Bridge.")
+    # Kirim daftar pengguna online terkini ke client yang baru terkoneksi
+    emit('online_users_updated', {
+        'count': len(get_online_users_list()),
+        'users': get_online_users_list()
+    })
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print("[Client Disconnected] Browser client disconnected.")
+    sid = getattr(request, 'sid', None)
+    user_info = None
+
+    if sid:
+        with online_users_lock:
+            user_info = online_users.pop(sid, None)
+
+    if user_info:
+        username = user_info.get('username', 'Anonymous')
+        client_id = user_info.get('client_id')
+        print(f"[Client Disconnected] {username} ({client_id}) disconnected.")
+
+        leave_payload = {
+            'type': 'user_leave',
+            'client_id': client_id,
+            'username': username,
+            'message': f"{username} meninggalkan sesi obrolan.",
+            'timestamp': time.time()
+        }
+
+        if TCP_AVAILABLE and hasattr(tcp_handler, 'send_chat_message'):
+            try:
+                tcp_handler.send_chat_message(leave_payload)
+            except Exception as e:
+                socketio.emit('receive_chat', leave_payload)
+        else:
+            socketio.emit('receive_chat', leave_payload)
+
+        broadcast_online_users()
+    else:
+        print("[Client Disconnected] Client disconnected.")
 
 
 if __name__ == '__main__':

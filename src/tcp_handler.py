@@ -197,6 +197,11 @@ class TCPChatServer:
         elif message_type == "typing":
             self._broadcast(payload, exclude_sender=client_socket)
 
+        elif message_type in ("system", "user_join", "user_leave"):
+            payload.setdefault("timestamp", time.time())
+            payload["server_received_at"] = time.time()
+            self._broadcast(payload)
+
         elif message_type == "ping":
             self._safe_send(client_socket, {
                 "type": "pong",
@@ -323,7 +328,8 @@ def _bridge_receive_loop(on_message):
                     payload = json.loads(line.decode("utf-8"))
 
                     if isinstance(payload, dict):
-                        if payload.get("type") == "chat_message":
+                        msg_type = payload.get("type")
+                        if msg_type in ("chat_message", "system", "user_join", "user_leave"):
                             on_message(payload)
 
                 except (json.JSONDecodeError, UnicodeDecodeError):
@@ -380,7 +386,7 @@ def send_chat_message(payload):
     if not isinstance(payload, dict):
         raise ValueError("Payload must be a dictionary.")
 
-    if payload.get("type") != "chat_message":
+    if payload.get("type") not in ("chat_message", "typing", "system", "user_join", "user_leave"):
         raise ValueError("Invalid message type.")
 
     data = (json.dumps(payload) + "\n").encode("utf-8")

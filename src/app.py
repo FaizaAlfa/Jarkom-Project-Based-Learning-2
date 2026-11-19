@@ -37,20 +37,20 @@ def index():
 # ==========================================
 # EVENT HANDLERS: TCP CHAT (PORT 5000)
 # ==========================================
+def handle_tcp_message(payload):
+    socketio.emit('receive_chat', payload)
 
 @socketio.on('send_chat')
 def handle_send_chat(payload):
     print(f"[TCP Chat] Received from {payload.get('username')}: {payload.get('message')}")
-    
+
     if TCP_AVAILABLE and hasattr(tcp_handler, 'send_chat_message'):
         try:
             tcp_handler.send_chat_message(payload)
         except Exception as e:
-            print(f"[TCP Error] Gagal forward ke socket TCP: {e}")
-            emit('receive_chat', payload, broadcast=True)
+            print(f"[TCP Error] Gagal mengirim pesan ke TCP Server: {e}")
     else:
-        # Local Broadcast jika backend raw socket belum diintegrasikan
-        emit('receive_chat', payload, broadcast=True)
+        socketio.emit('receive_chat', payload)
 
 
 # ==========================================
@@ -95,4 +95,20 @@ if __name__ == '__main__':
     print(" Dual-Socket Whiteboard & Chat Server")
     print(" Running at: http://127.0.0.1:8080")
     print("=" * 60)
-    socketio.run(app, host='0.0.0.0', port=8080, debug=True)
+
+    if TCP_AVAILABLE:
+        tcp_handler.start_tcp_server()
+
+        try:
+            tcp_handler.start_tcp_bridge(handle_tcp_message)
+            print("[TCP Bridge] Connected to TCP Server on port 5000.")
+        except OSError as e:
+            print(f"[TCP Bridge Error] Failed to connect: {e}")
+
+    socketio.run(
+        app,
+        host='0.0.0.0',
+        port=8080,
+        debug=True,
+        use_reloader=False
+    )

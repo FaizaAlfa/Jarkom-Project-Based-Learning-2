@@ -1,21 +1,36 @@
-# Byte-compiled / optimized files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Environments
+# Virtual Environment
 .env
-.venv
-env/
+.venv/
 venv/
+env/
 ENV/
 
-# Editor & OS artifacts
+# Environment examples should remain tracked
+!.env.example
+
+# IDE
 .vscode/
 .idea/
+
+# OS
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Wireshark temp
+# Logs and temporary files
+*.log
 *.tmp
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build
+build/
+dist/

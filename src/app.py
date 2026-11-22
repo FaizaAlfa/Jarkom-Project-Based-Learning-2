@@ -1,3 +1,4 @@
+
 import os
 import time
 import threading
@@ -60,8 +61,10 @@ def index():
 # ==========================================
 # EVENT HANDLERS: TCP CHAT (PORT 5000)
 # ==========================================
+
 def handle_tcp_message(payload):
     socketio.emit('receive_chat', payload)
+
 
 @socketio.on('send_chat')
 def handle_send_chat(payload):
@@ -180,16 +183,28 @@ def handle_typing(payload):
 # EVENT HANDLERS: UDP CANVAS (PORT 5001)
 # ==========================================
 
+def handle_udp_message(payload):
+    message_type = payload.get('type')
+
+    if message_type == 'draw_stroke':
+        socketio.emit('render_stroke', payload)
+
+    elif message_type in ('clear_canvas', 'clear'):
+        socketio.emit('clear_canvas', payload)
+
+
 @socketio.on('draw_stroke')
 def handle_draw_stroke(payload):
+    if not isinstance(payload, dict):
+        return
+
     if UDP_AVAILABLE and hasattr(udp_handler, 'send_udp_stroke'):
         try:
             udp_handler.send_udp_stroke(payload)
         except Exception as e:
-            emit('render_stroke', payload, broadcast=True, include_self=False)
+            print(f"[UDP Error] Gagal mengirim stroke ke UDP Server: {e}")
     else:
-        # Broadcast ke client lain (tanpa mengirim balik ke pengirim asli)
-        emit('render_stroke', payload, broadcast=True, include_self=False)
+        print("[UDP Error] UDP Handler tidak tersedia. Stroke tidak dikirim.")
 
 
 @socketio.on('cursor_move')
@@ -200,8 +215,32 @@ def handle_cursor_move(payload):
 @socketio.on('clear_canvas')
 def handle_clear_canvas(payload):
     print(f"[Canvas] Clear triggered by {payload.get('username')}")
-    emit('clear_canvas', payload, broadcast=True)
 
+    if not isinstance(payload, dict):
+        return
+
+    clear_payload = dict(payload)
+    clear_payload['type'] = 'clear_canvas'
+
+    if UDP_AVAILABLE and hasattr(udp_handler, 'send_udp_stroke'):
+        try:
+            udp_handler.send_udp_stroke(clear_payload)
+        except Exception as e:
+            print(f"[UDP Error] Gagal mengirim clear canvas ke UDP Server: {e}")
+    else:
+        print("[UDP Error] UDP Handler tidak tersedia. Clear tidak dikirim.")
+
+@socketio.on('check_udp_status')
+def handle_check_udp_status():
+    if not UDP_AVAILABLE:
+        return {'active': False}
+
+    try:
+        active = udp_handler.is_udp_bridge_running()
+        return {'active': active}
+    except Exception as e:
+        print(f"[UDP Status Error] {e}")
+        return {'active': False}
 
 @socketio.on('connect')
 def handle_connect():
@@ -262,6 +301,16 @@ if __name__ == '__main__':
             print("[TCP Bridge] Connected to TCP Server on port 5000.")
         except OSError as e:
             print(f"[TCP Bridge Error] Failed to connect: {e}")
+
+    if UDP_AVAILABLE:
+        try:
+            udp_handler.start_udp_server()
+            print("[UDP Server] Listening on port 5001.")
+
+            udp_handler.start_udp_bridge(handle_udp_message)
+            print("[UDP Bridge] Connected to UDP Server on port 5001.")
+        except Exception as e:
+            print(f"[UDP Bridge Error] Failed to start UDP Server or Bridge: {e}")
 
     socketio.run(
         app,

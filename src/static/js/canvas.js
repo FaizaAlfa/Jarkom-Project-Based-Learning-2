@@ -1,6 +1,7 @@
 /**
- * canvas.js - UDP Canvas Drawing Logic & Remote Pointer
+ * canvas.js - UDP Canvas Drawing Logic & Socket.IO Remote Pointer
  * Menangani streaming data live canvas drawing via UDP Datagram (Flask-SocketIO Bridge)
+ * dan remote cursor via Socket.IO.
  */
 
 window.CanvasManager = (function() {
@@ -251,13 +252,24 @@ window.CanvasManager = (function() {
         clearLocalCanvas();
       });
 
-      socket.on('connect', () => {
-        updateUDPStatus(true);
-      });
+      function checkUDPStatus() {
+          if (!socket || isMockMode || !socket.connected) {
+              updateUDPStatus(false);
+              return;
+          }
+
+          socket.emit('check_udp_status', {}, (response) => {
+              updateUDPStatus(response && response.active === true);
+          });
+      }
+
+      socket.on('connect', checkUDPStatus);
 
       socket.on('disconnect', () => {
-        updateUDPStatus(false);
+          updateUDPStatus(false);
       });
+
+      checkUDPStatus();
     }
   }
 
@@ -272,7 +284,7 @@ window.CanvasManager = (function() {
         <svg class="remote-cursor-pointer" viewBox="0 0 24 24" fill="currentColor">
           <path d="M4.5 3.5l14 7-6.5 2-2 6.5-5.5-15.5z"/>
         </svg>
-        <span class="remote-cursor-badge">${escapeHtml(username)} • UDP</span>
+        <span class="remote-cursor-badge">${escapeHtml(username)} • Socket.IO</span>
       `;
       remoteCursorsContainer.appendChild(cursorEl);
       remoteCursors[id] = cursorEl;
@@ -359,14 +371,15 @@ window.CanvasManager = (function() {
   }
 
   function updateUDPStatus(connected) {
-    if (!udpStatusBadgeEl) return;
-    if (connected) {
-      udpStatusBadgeEl.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200';
-      udpStatusBadgeEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> UDP Canvas (Port 5001): Streaming`;
-    } else {
-      udpStatusBadgeEl.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200';
-      udpStatusBadgeEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500"></span> UDP Canvas: Streaming (Mock Mode)`;
-    }
+      if (!udpStatusBadgeEl) return;
+
+      if (connected) {
+          udpStatusBadgeEl.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200';
+          udpStatusBadgeEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> UDP Bridge (Port 5001): Active`;
+      } else {
+          udpStatusBadgeEl.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200';
+          udpStatusBadgeEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500"></span> UDP Bridge (Port 5001): Inactive`;
+      }
   }
 
   // Simulasi lingkaran merah dan kursor Rifqi sesuai gambar FE-Desain

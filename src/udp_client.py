@@ -5,7 +5,7 @@ Jalankan ini SEBELUM melakukan drawing, untuk menghasilkan trafik UDP nyata.
 import socket, json, sys, time
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-PORT = 5001
+PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 5001
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("0.0.0.0", 0))   # ephemeral port

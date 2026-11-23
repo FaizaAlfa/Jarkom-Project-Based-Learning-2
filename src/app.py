@@ -209,7 +209,26 @@ def handle_draw_stroke(payload):
 
 @socketio.on('cursor_move')
 def handle_cursor_move(payload):
+    # Teruskan koordinat live cursor ke UDP port 5002 untuk analisis Wireshark
+    if UDP_AVAILABLE and hasattr(udp_handler, 'send_udp_cursor'):
+        try:
+            udp_handler.send_udp_cursor(payload)
+        except Exception:
+            pass
+
     emit('render_cursor', payload, broadcast=True, include_self=False)
+
+
+@socketio.on('cursor_leave')
+def handle_cursor_leave(payload):
+    # Beritahukan client lain bahwa kursor keluar dari kanvas
+    if UDP_AVAILABLE and hasattr(udp_handler, 'send_udp_cursor'):
+        try:
+            udp_handler.send_udp_cursor(payload)
+        except Exception:
+            pass
+
+    emit('remove_cursor', payload, broadcast=True, include_self=False)
 
 
 @socketio.on('clear_canvas')
@@ -282,6 +301,9 @@ def handle_disconnect():
         else:
             socketio.emit('receive_chat', leave_payload)
 
+        # Hapus remote cursor user yang disconnect dari layar user lain
+        socketio.emit('remove_cursor', {'client_id': client_id})
+
         broadcast_online_users()
     else:
         print("[Client Disconnected] Client disconnected.")
@@ -309,6 +331,11 @@ if __name__ == '__main__':
 
             udp_handler.start_udp_bridge(handle_udp_message)
             print("[UDP Bridge] Connected to UDP Server on port 5001.")
+
+            # Jalankan UDP Cursor Server pada port 5002
+            if hasattr(udp_handler, 'start_udp_cursor_server'):
+                udp_handler.start_udp_cursor_server()
+                print("[UDP Cursor Server] Listening on port 5002.")
         except Exception as e:
             print(f"[UDP Bridge Error] Failed to start UDP Server or Bridge: {e}")
 

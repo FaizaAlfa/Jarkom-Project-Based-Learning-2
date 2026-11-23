@@ -290,3 +290,113 @@ def is_udp_bridge_running():
             and _bridge_socket is not None
             and udp_server.running
         )
+
+
+# ==========================================
+# UDP LIVE CURSOR TRACKING (PORT 5002)
+# ==========================================
+
+class UDPCursorServer:
+    """
+    UDP Cursor Server — SOCK_DGRAM, port 5002.
+    Menerima paket live cursor tracking dari Flask bridge / client UDP.
+    Memungkinkan Wireshark menangkap trafik kursor di port 5002 terpisah.
+    """
+    def __init__(self, host="0.0.0.0", port=5002):
+        self.host = host
+        self.port = port
+        self.sock = None
+        self.running = False
+        self.clients = set()
+        self.clients_lock = threading.Lock()
+
+    def start(self):
+        if self.running:
+            return
+
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((self.host, self.port))
+        self.running = True
+
+        logger.info("UDP Cursor Server listening on %s:%s", self.host, self.port)
+        threading.Thread(target=self._recv_loop, daemon=True).start()
+
+    def stop(self):
+        self.running = False
+        with self.clients_lock:
+            self.clients.clear()
+        if self.sock:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
+
+    def _recv_loop(self):
+        while self.running:
+            try:
+                data, addr = self.sock.recvfrom(MAX_UDP_PAYLOAD)
+            except OSError:
+                break
+
+            try:
+                payload = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+
+            if not isinstance(payload, dict):
+                continue
+
+            message_type = payload.get("type")
+            if message_type == "register":
+                with self.clients_lock:
+                    self.clients.add(addr)
+            elif message_type == "unregister":
+                with self.clients_lock:
+                    self.clients.discard(addr)
+            elif message_type in ("cursor_move", "cursor_leave"):
+                with self.clients_lock:
+                    targets = [c for c in self.clients if c != addr]
+                for client_addr in targets:
+                    try:
+                        self.sock.sendto(data, client_addr)
+                    except OSError:
+                        pass
+
+
+udp_cursor_server = UDPCursorServer()
+_cursor_send_sock = None
+_cursor_send_lock = threading.Lock()
+
+
+def start_udp_cursor_server():
+    udp_cursor_server.start()
+
+
+def stop_udp_cursor_server():
+    global _cursor_send_sock
+    udp_cursor_server.stop()
+    with _cursor_send_lock:
+        if _cursor_send_sock:
+            try:
+                _cursor_send_sock.close()
+            except OSError:
+                pass
+            _cursor_send_sock = None
+
+
+def send_udp_cursor(payload, host="127.0.0.1", port=5002):
+    """Mengirim datagram koordinat live cursor ke port 5002 (UDP)."""
+    global _cursor_send_sock
+    if not isinstance(payload, dict):
+        return
+
+    data = json.dumps(payload).encode("utf-8")
+    with _cursor_send_lock:
+        if _cursor_send_sock is None:
+            _cursor_send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            _cursor_send_sock.sendto(data, (host, port))
+        except OSError:
+            pass
